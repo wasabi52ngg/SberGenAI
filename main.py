@@ -282,29 +282,84 @@ def log_updates(inn: str, changes: dict):
     logger.info(f"Изменения для ИНН {inn} записаны в лог")
 
 
-async def fetch_service_data(service: str, payload: dict) -> dict:
-    """Отправка HTTP-запроса к сервису."""
+async def fetch_service_data(service: str, payload: dict, max_attempts: int = 3, check_interval: int = 10) -> dict:
+    """Отправка HTTP-запроса к сервису с повторными попытками и проверкой статуса."""
     url = SERVICE_URLS.get(service)
     if not url:
         logger.error(f"Неизвестный сервис: {service}")
         return {"status": "error", "message": f"Неизвестный сервис: {service}"}
 
+    # Устанавливаем таймаут: 120 секунд для gibdd_auto и gibdd_fines, 30 секунд для остальных
+    timeout = 120 if service in ["gibdd_auto", "gibdd_fines"] else 30
+    total_timeout = timeout * max_attempts  # Общий таймаут для всех попыток
+
     async with aiohttp.ClientSession() as session:
-        try:
-            async with session.post(url, json=payload, timeout=30) as response:
-                if response.status == 200:
+        start_time = asyncio.get_event_loop().time()
+        attempt = 1
+
+        while attempt <= max_attempts:
+            try:
+                async with session.post(url, json=payload, timeout=timeout) as response:
+                    if response.status != 200:
+                        error_msg = f"Ошибка {response.status} от сервиса {service}"
+                        logger.error(error_msg)
+                        if attempt == max_attempts:
+                            return {"status": "error", "message": error_msg}
+                        logger.info(f"Попытка {attempt} не удалась для {service}, повтор через 5 секунд")
+                        await asyncio.sleep(5)
+                        attempt += 1
+                        continue
+
                     data = await response.json()
-                    logger.info(f"Успешный запрос к {service}: {data}")
-                    return data
-                else:
-                    error_msg = f"Ошибка {response.status} от сервиса {service}"
-                    logger.error(error_msg)
-                    return {"status": "error", "message": error_msg}
-        except Exception as e:
-            logger.error(f"Ошибка при запросе к {service}: {str(e)}")
-            return {"status": "error", "message": str(e)}
+                    logger.info(f"Запрос к {service}: {data}")
 
+                    # Проверяем, является ли ответ промежуточным для gibdd_auto и gibdd_fines
+                    if service in ["gibdd_auto", "gibdd_fines"]:
+                        # Для gibdd_fines: промежуточный ответ
+                        if data.get("data") == "Выполняется запрос, ждите...":
+                            elapsed_time = asyncio.get_event_loop().time() - start_time
+                            if elapsed_time >= total_timeout:
+                                logger.error(f"Превышен общий таймаут ({total_timeout} секунд) для {service}")
+                                return {"status": "error", "message": f"Превышен таймаут {total_timeout} секунд"}
+                            logger.info(f"Промежуточный ответ от {service}, ожидание {check_interval} секунд перед повторной проверкой")
+                            await asyncio.sleep(check_interval)
+                            continue
+                        # Для gibdd_auto: ошибка таймаута или retry=True
+                        elif service == "gibdd_auto" and (
+                            data.get("status") == "error" and (
+                                "Timeout 10000ms exceeded" in data.get("message", "") or
+                                data.get("retry", False)
+                            )
+                        ):
+                            elapsed_time = asyncio.get_event_loop().time() - start_time
+                            if elapsed_time >= total_timeout:
+                                logger.error(f"Превышен общий таймаут ({total_timeout} секунд) для {service}")
+                                return {"status": "error", "message": f"Превышен таймаут {total_timeout} секунд"}
+                            logger.info(f"Ошибка с возможностью повтора от {service}, ожидание {check_interval} секунд перед повторной проверкой")
+                            await asyncio.sleep(check_interval)
+                            continue
 
+                    # Если ответ содержит финальный статус, возвращаем его
+                    if data.get("status") in ["success", "error", "no_data"]:
+                        logger.info(f"Успешный запрос к {service}: {data}")
+                        return data
+                    else:
+                        logger.warning(f"Некорректный ответ от {service}: {data}")
+                        if attempt == max_attempts:
+                            return {"status": "error", "message": f"Некорректный ответ от {service}"}
+                        await asyncio.sleep(5)
+                        attempt += 1
+
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                logger.error(f"Ошибка при запросе к {service} (попытка {attempt}): {str(e)}")
+                if attempt == max_attempts:
+                    return {"status": "error", "message": f"Ошибка после {max_attempts} попыток: {str(e)}"}
+                logger.info(f"Попытка {attempt} не удалась для {service}, повтор через 5 секунд")
+                await asyncio.sleep(5)
+                attempt += 1
+
+        return {"status": "error", "message": f"Не удалось получить финальный ответ от {service} после {max_attempts} попыток"}
+    
 async def update_db_records(context: ContextTypes.DEFAULT_TYPE):
     """Ежедневное обновление записей в базе данных."""
     logger.info("Начало ежедневного обновления записей в базе данных")
@@ -462,8 +517,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.callback_query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
             else:
                 await update.message.reply_text("Выберите действие:", reply_markup=reply_markup)
-            # Очистка пользовательских данных
-            context.user_data.update({})  # Присваиваем пустой словарь
+
             return
         except TimedOut:
             logger.warning(f"Тайм-аут при отправке главного меню (попытка {attempt + 1}/3).")

@@ -62,7 +62,7 @@ async def get_probate_case(name: str, birth_date: str, semaphore: asyncio.Semaph
                     # Проверка на капчу
                     if await page.query_selector("div.captcha"):
                         logger.error("Обнаружена капча")
-                        return json.dumps({"error": "Обнаружена капча, попробуйте позже"}, ensure_ascii=False, indent=2)
+                        return json.dumps({"status": "error", "message": "Обнаружена капча, попробуйте позже"}, ensure_ascii=False, indent=2)
 
                     # Заполнение формы
                     logger.info("Заполняем форму")
@@ -78,13 +78,13 @@ async def get_probate_case(name: str, birth_date: str, semaphore: asyncio.Semaph
                     logger.info("Нажимаем кнопку поиска")
                     await page.click("button.js-probate-cases__submit")
                     logger.info("Ожидаем результаты (до 15 секунд)")
-                    await page.wait_for_selector("div.probate-cases__result, h5.probate-cases__result-header", timeout=15000)
+                    await page.wait_for_selector("div.probate-cases__plate_result, h5.probate-cases__result-header", timeout=15000)
 
                     # Парсинг результатов в памяти
                     content = await page.content()
                     soup = BeautifulSoup(content, 'html.parser')
 
-                    result = {"case": {}}
+                    result = {"status": "success", "case": {}}
 
                     # Проверяем оба возможных варианта результатов
                     result_block = soup.find("div", class_="probate-cases__plate_result") or \
@@ -92,7 +92,7 @@ async def get_probate_case(name: str, birth_date: str, semaphore: asyncio.Semaph
 
                     if not result_block:
                         logger.error("Не удалось распознать структуру результатов")
-                        return json.dumps({"error": "Не удалось распознать структуру результатов"},
+                        return json.dumps({"status": "error", "message": "Не удалось распознать структуру результатов"},
                                         ensure_ascii=False, indent=2)
 
                     # Обрабатываем случай с нулевыми результатами
@@ -100,6 +100,7 @@ async def get_probate_case(name: str, birth_date: str, semaphore: asyncio.Semaph
                     if zero_results and "0" in zero_results.get_text():
                         logger.info("Наследственных дел не найдено")
                         return json.dumps({
+                            "status": "success",
                             "result": "Наследственных дел не найдено",
                             "details": zero_results.get_text(strip=True)
                         }, ensure_ascii=False, indent=2)
@@ -124,7 +125,7 @@ async def get_probate_case(name: str, birth_date: str, semaphore: asyncio.Semaph
 
                 except PlaywrightError as e:
                     logger.error(f"Ошибка Playwright: {str(e)}")
-                    return json.dumps({"error": str(e)}, ensure_ascii=False, indent=2)
+                    return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False, indent=2)
 
                 finally:
                     await page.close()
@@ -132,7 +133,7 @@ async def get_probate_case(name: str, birth_date: str, semaphore: asyncio.Semaph
 
             except PlaywrightError as e:
                 logger.error(f"Ошибка подключения: {str(e)}")
-                return json.dumps({"error": str(e)}, ensure_ascii=False, indent=2)
+                return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False, indent=2)
 
 async def process_multiple_cases(cases: list, cdp_endpoint: str) -> list:
     """Параллельная обработка списка дел."""

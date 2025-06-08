@@ -39,7 +39,7 @@ async def attempt_osago_check(page, vin: str) -> tuple:
         # Проверка на превышение лимита запросов
         info_block = await page.query_selector("div.infoBlock")
         if info_block and "Вы превысили количество запросов" in await info_block.inner_text():
-            return {"status": "error", "message": "Превышен лимит запросов в час"}, False
+            return {"status": "error", "message": "Превышен лимит запросов в час", "vin": vin}, False
 
         await page.wait_for_selector("input[name='vin']", timeout=10000)
 
@@ -63,20 +63,51 @@ async def attempt_osago_check(page, vin: str) -> tuple:
         not_found_modal = await page.query_selector("div#modal-policy-not-found")
         if not_found_modal:
             logger.info(f"Сведения об ОСАГО для VIN {vin} не найдены")
-            return {"status": "success", "results": {}}, False
+            return {"status": "success", "results": {}, "vin": vin}, False
 
         # Проверка на окно ошибки
         error_modal = await page.query_selector("div#modal-error")
         if error_modal:
             logger.warning(f"Обнаружено окно ошибки для VIN {vin}")
-            return None, True
+            return {"status": "error", "message": "Ошибка на сайте", "vin": vin}, True
 
-        # Данные найдены, парсинг будет позже
-        return None, False
+        # Данные найдены, извлекаем их
+        policy_data = await page.evaluate("""
+            () => {
+                const policyModal = document.querySelector('div.policyDataModal');
+                if (!policyModal) return null;
+
+                const policy = {};
+                const dateSlot = policyModal.querySelector('div.policyDataModal__dateSlot');
+                if (dateSlot) {
+                    policy.check_date = dateSlot.textContent.trim();
+                }
+
+                const dataLists = policyModal.querySelectorAll('dl.dataList__list');
+                dataLists.forEach(dataList => {
+                    const items = dataList.querySelectorAll('div.dataList__item');
+                    items.forEach(item => {
+                        const label = item.querySelector('dt')?.textContent.trim().replace(':', '').toLowerCase().replace(/\\s+/g, '_');
+                        const value = item.querySelector('dd')?.textContent.trim();
+                        if (label && value) {
+                            policy[label] = value;
+                        }
+                    });
+                });
+                return policy;
+            }
+        """)
+
+        if not policy_data:
+            logger.warning(f"Не удалось извлечь данные для VIN {vin}")
+            return {"status": "error", "message": "Не удалось извлечь данные из модального окна", "vin": vin}, True
+
+        logger.info(f"Найдены данные ОСАГО для VIN {vin}")
+        return {"status": "success", "policies": [policy_data], "vin": vin}, False
 
     except PlaywrightError as e:
         logger.error(f"Ошибка Playwright для VIN {vin}: {str(e)}")
-        return {"status": "error", "message": f"Ошибка загрузки страницы: {str(e)}"}, False
+        return {"status": "error", "message": f"Ошибка загрузки страницы: {str(e)}", "vin": vin}, True
 
 
 async def get_info_osago(vin: str, semaphore: asyncio.Semaphore, cdp_endpoint: str = "http://localhost:9222") -> dict:
@@ -101,82 +132,23 @@ async def get_info_osago(vin: str, semaphore: asyncio.Semaphore, cdp_endpoint: s
                     try:
                         result, can_retry = await attempt_osago_check(page, vin)
                         if not can_retry:
-                            result.update({"vin": vin})
+                            logger.info(f"Обработка VIN {vin} завершена за {time.time() - start_time:.2f} секунд")
+                            log_memory_usage()
                             return result
 
-                        # Проверка на отсутствие полиса
-                        if await page.query_selector("div#modal-policy-not-found"):
-                            if attempt < max_attempts:
-                                logger.info(f"Попытка {attempt} для VIN {vin}: Полис не найден, повторная попытка")
-                                await page.wait_for_timeout(3000)
-                                continue
-                            return {"status": "success", "policies": [], "vin": vin}
-
-                        # Проверка наличия данных
-                        policy_modal = await page.query_selector("div.policyDataModal")
-                        if not policy_modal:
-                            if attempt < max_attempts:
-                                logger.info(f"Попытка {attempt} для VIN {vin}: Данные не найдены, повторная попытка")
-                                await page.wait_for_timeout(3000)
-                                continue
-                            return {"status": "error", "message": "Данные не найдены", "vin": vin}
-
-                        # Извлечение данных с помощью JavaScript
-                        policy_data = await page.evaluate("""
-                            () => {
-                                const policyModal = document.querySelector('div.policyDataModal');
-                                if (!policyModal) return null;
-
-                                const policy = {};
-                                const dateSlot = policyModal.querySelector('div.policyDataModal__dateSlot');
-                                if (dateSlot) {
-                                    policy.check_date = dateSlot.textContent.trim();
-                                }
-
-                                const dataLists = policyModal.querySelectorAll('dl.dataList__list');
-                                dataLists.forEach(dataList => {
-                                    const items = dataList.querySelectorAll('div.dataList__item');
-                                    items.forEach(item => {
-                                        const label = item.querySelector('dt')?.textContent.trim().replace(':', '').toLowerCase().replace(/\\s+/g, '_');
-                                        const value = item.querySelector('dd')?.textContent.trim();
-                                        if (label && value) {
-                                            policy[label] = value;
-                                        }
-                                    });
-                                });
-                                return policy;
-                            }
-                        """)
-
-                        if not policy_data:
-                            if attempt < max_attempts:
-                                logger.info(f"Попытка {attempt} для VIN {vin}: Данные не извлечены, повторная попытка")
-                                await page.wait_for_timeout(3000)
-                                continue
-                            return {"status": "error", "message": "Не удалось извлечь данные", "vin": vin}
-
-                        result = {"status": "success", "policies": [policy_data], "vin": vin}
-                        logger.info(f"Найдены данные ОСАГО для VIN {vin}")
-                        logger.info(f"Обработка VIN {vin} заняла {time.time() - start_time:.2f} секунд")
-                        log_memory_usage()
-                        return result
+                        logger.info(f"Попытка {attempt} для VIN {vin} не удалась, повторная попытка через 3 секунды")
+                        await page.wait_for_timeout(3000)
 
                     except Exception as e:
                         last_error = str(e)
                         if attempt < max_attempts:
-                            logger.info(
-                                f"Попытка {attempt} для VIN {vin} не удалась, повторная попытка через 3 секунды")
+                            logger.info(f"Попытка {attempt} для VIN {vin} не удалась: {str(e)}, повторная попытка")
                             await page.wait_for_timeout(3000)
                             continue
-                        return {"status": "error", "message": f"Ошибка после {max_attempts} попыток: {last_error}",
-                                "vin": vin}
+                        return {"status": "error", "message": f"Ошибка после {max_attempts} попыток: {last_error}", "vin": vin}
 
-                return {"status": "error", "message": "Неизвестная ошибка", "vin": vin}
+                return {"status": "error", "message": f"Неизвестная ошибка после {max_attempts} попыток", "vin": vin}
 
-            except PlaywrightError as e:
-                logger.error(f"Ошибка при загрузке страницы или взаимодействии для VIN {vin}: {str(e)}")
-                return {"status": "error", "message": f"Ошибка загрузки страницы или взаимодействия: {str(e)}",
-                        "vin": vin}
             finally:
                 try:
                     await page.close()
