@@ -21,7 +21,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
     handlers=[
-        logging.FileHandler("bot.log"),
         logging.StreamHandler()
     ]
 )
@@ -77,6 +76,15 @@ async def fetch_service_data(session: aiohttp.ClientSession, url: str, inn: str)
         logger.error(f"Тайм-аут при запросе к {url} для ИНН {inn}")
         return {"error": "Тайм-аут запроса"}
 
+def clean_text(text: str) -> str:
+    """Очистка текста от лишних пробелов и переносов строк."""
+    if not text or text.lower() == "неизвестно":
+        return "Неизвестно"
+    # Удаляем лишние пробелы и переносы, сохраняя только одну строку
+    cleaned = re.sub(r'\s+', ' ', text.strip())
+    # Удаляем дублирующиеся подстроки (например, повторяющиеся ФИО)
+    parts = list(dict.fromkeys(cleaned.split(', ')))
+    return ', '.join(parts)
 
 async def process_request(inn: str, update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка запроса из очереди."""
@@ -94,71 +102,83 @@ async def process_request(inn: str, update: Update, context: ContextTypes.DEFAUL
             efrsb_data, kad_arbitr_data = await asyncio.gather(efrsb_task, kad_arbitr_task, return_exceptions=True)
 
         # Формирование отчета
-        report = [f"Отчет по должнику (ИНН: {inn})", "============================="]
-        report.append("\n1. Основные данные")
-        report.append("-------------------")
-        report.append(f"- ИНН: {inn}")
+        report = [
+            "```",
+            f"Отчет по должнику (ИНН: {inn})",
+            "=" * 50,
+            "",
+            "1. Основные данные",
+            "-" * 50,
+            f"ИНН: {inn}",
+            ""
+        ]
 
         # 2. ЕФРСБ
-        report.append("\n2. ЕФРСБ")
-        report.append("-------------------")
+        report.append("2. ЕФРСБ")
+        report.append("-" * 50)
         if isinstance(efrsb_data, dict) and efrsb_data.get("status") == "success":
             individuals = efrsb_data.get("individuals", [])
             legal_entities = efrsb_data.get("legal_entities", [])
             if not (individuals or legal_entities):
-                report.append("- Банкротство: Не найдено")
+                report.append("Банкротство: Не найдено")
             else:
-                report.append("- Банкротство:")
+                report.append("Банкротство:")
                 if individuals:
                     for idx, person in enumerate(individuals, 1):
-                        report.append(f"  - Физическое лицо {idx}:")
-                        report.append(f"    - ФИО: {person.get('full_name', 'Неизвестно')}")
-                        report.append(f"    - Адрес: {person.get('address', 'Неизвестно')}")
-                        report.append(f"    - Статус: {person.get('status', 'Неизвестно')}")
-                        report.append(f"    - Дата статуса: {person.get('status_date', 'Неизвестно')}")
-                        report.append(f"    - Номер дела: {person.get('court_case_number', 'Неизвестно')}")
-                        report.append(
-                            f"    - Арбитражный управляющий: {person.get('arbitration_manager', 'Неизвестно')}")
+                        report.extend([
+                            f"Физическое лицо {idx}:",
+                            f"  ФИО: {clean_text(person.get('full_name', 'Неизвестно'))}",
+                            f"  Адрес: {clean_text(person.get('address', 'Неизвестно'))}",
+                            f"  Статус: {clean_text(person.get('status', 'Неизвестно'))}",
+                            f"  Дата статуса: {clean_text(person.get('status_date', 'Неизвестно'))}",
+                            f"  Номер дела: {clean_text(person.get('court_case_number', 'Неизвестно'))}",
+                            f"  Арбитражный управляющий: {clean_text(person.get('arbitration_manager', 'Неизвестно'))}",
+                            ""
+                        ])
                 if legal_entities:
                     for idx, entity in enumerate(legal_entities, 1):
-                        report.append(f"  - Юридическое лицо {idx}:")
-                        report.append(f"    - Название: {entity.get('name', 'Неизвестно')}")
-                        report.append(f"    - ИНН: {entity.get('inn', 'Неизвестно')}")
-                        report.append(f"    - Статус: {entity.get('status', 'Неизвестно')}")
-                        report.append(f"    - Дата статуса: {entity.get('status_date', 'Неизвестно')}")
-                        report.append(f"    - Номер дела: {entity.get('court_case_number', 'Неизвестно')}")
-                        report.append(
-                            f"    - Арбитражный управляющий: {entity.get('arbitration_manager', 'Неизвестно')}")
+                        report.extend([
+                            f"Юридическое лицо {idx}:",
+                            f"  Название: {clean_text(entity.get('name', 'Неизвестно'))}",
+                            f"  ИНН: {clean_text(entity.get('inn', 'Неизвестно'))}",
+                            f"  Статус: {clean_text(entity.get('status', 'Неизвестно'))}",
+                            f"  Дата статуса: {clean_text(entity.get('status_date', 'Неизвестно'))}",
+                            f"  Номер дела: {clean_text(entity.get('court_case_number', 'Неизвестно'))}",
+                            f"  Арбитражный управляющий: {clean_text(entity.get('arbitration_manager', 'Неизвестно'))}",
+                            ""
+                        ])
         else:
-            error_msg = efrsb_data.get("error", "Неизвестная ошибка") if isinstance(efrsb_data,
-                                                                                    dict) else "Некорректные данные"
-            report.append(f"- Статус: Ошибка: {error_msg}")
+            error_msg = efrsb_data.get("error", "Неизвестная ошибка") if isinstance(efrsb_data, dict) else "Некорректные данные"
+            report.append(f"Статус: Ошибка: {error_msg}")
             logger.error(f"Ошибка в данных ЕФРСБ для ИНН {inn}: {error_msg}")
+        report.append("")
 
         # 3. Кад.арбитр
-        report.append("\n3. Кад.арбитр")
-        report.append("-------------------")
+        report.append("3. Кад.арбитр")
+        report.append("-" * 50)
         if isinstance(kad_arbitr_data, dict) and kad_arbitr_data.get("status") == "success":
             cases = kad_arbitr_data.get("data", {}).get("cases", [])
             if not cases:
-                report.append("- Судебные дела: Не найдены")
+                report.append("Судебные дела: Не найдены")
             else:
-                report.append("- Судебные дела:")
+                report.append("Судебные дела:")
                 for idx, case in enumerate(cases, 1):
-                    report.append(f"  - Дело {idx}:")
-                    report.append(f"    - Номер дела: {case.get('case_number', 'Неизвестно')}")
-                    report.append(f"    - Дата регистрации: {case.get('registration_date', 'Неизвестно')}")
-                    report.append(f"    - Судья: {case.get('judge', 'Неизвестно')}")
-                    report.append(f"    - Текущая инстанция: {case.get('current_instance', 'Неизвестно')}")
-                    report.append(f"    - Истец: {case.get('plaintiff', 'Неизвестно')}")
-                    report.append(f"    - Ответчик: {case.get('respondent', 'Неизвестно')}")
+                    report.extend([
+                        f"Дело {idx}:",
+                        f"  Номер дела: {clean_text(case.get('case_number', 'Неизвестно'))}",
+                        f"  Дата регистрации: {clean_text(case.get('registration_date', 'Неизвестно'))}",
+                        f"  Судья: {clean_text(case.get('judge', 'Неизвестно'))}",
+                        f"  Текущая инстанция: {clean_text(case.get('current_instance', 'Неизвестно'))}",
+                        f"  Истец: {clean_text(case.get('plaintiff', 'Неизвестно'))}",
+                        f"  Ответчик: {clean_text(case.get('respondent', 'Неизвестно'))}",
+                        ""
+                    ])
         else:
-            error_msg = kad_arbitr_data.get("error", "Неизвестная ошибка") if isinstance(kad_arbitr_data,
-                                                                                         dict) else "Некорректные данные"
-            report.append(f"- Статус: Ошибка: {error_msg}")
+            error_msg = kad_arbitr_data.get("error", "Неизвестная ошибка") if isinstance(kad_arbitr_data, dict) else "Некорректные данные"
+            report.append(f"Статус: Ошибка: {error_msg}")
             logger.error(f"Ошибка в данных Кад.арбитр для ИНН {inn}: {error_msg}")
 
-        report.append("=============================")
+        report.extend(["=" * 50, "```"])
         response = "\n".join(report)
 
         # Удаление сообщения об ожидании
@@ -170,7 +190,7 @@ async def process_request(inn: str, update: Update, context: ContextTypes.DEFAUL
         # Отправка результата
         for attempt in range(3):
             try:
-                await update.message.reply_text(response)
+                await update.message.reply_text(response, parse_mode="Markdown")
                 logger.info(f"Запрос для ИНН {inn} успешно обработан за {time.time() - start_time:.2f} секунд")
                 return
             except TimedOut:
@@ -191,7 +211,6 @@ async def process_request(inn: str, update: Update, context: ContextTypes.DEFAUL
             logger.warning(f"Тайм-аут при отправке сообщения об ошибке для ИНН {inn}")
             await asyncio.sleep(2)
             await update.message.reply_text(f"Произошла ошибка: {str(e)}. Пожалуйста, попробуйте снова.")
-
 
 async def worker(context: ContextTypes.DEFAULT_TYPE):
     """Фоновая задача для обработки очереди запросов."""

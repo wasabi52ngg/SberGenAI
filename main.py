@@ -359,7 +359,7 @@ async def fetch_service_data(service: str, payload: dict, max_attempts: int = 3,
                 attempt += 1
 
         return {"status": "error", "message": f"Не удалось получить финальный ответ от {service} после {max_attempts} попыток"}
-    
+
 async def update_db_records(context: ContextTypes.DEFAULT_TYPE):
     """Ежедневное обновление записей в базе данных."""
     logger.info("Начало ежедневного обновления записей в базе данных")
