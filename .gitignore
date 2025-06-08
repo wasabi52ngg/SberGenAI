@@ -1,0 +1,5 @@
+venv
+.env
+backups
+debtors.db
+updates_log.txt
