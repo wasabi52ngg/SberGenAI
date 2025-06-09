@@ -127,7 +127,7 @@ async def process_request(inn: str, update: Update, context: ContextTypes.DEFAUL
                     for idx, person in enumerate(individuals, 1):
                         report.extend([
                             f"Физическое лицо {idx}:",
-                            f"  ФИО: {clean_text(person.get('full_name', 'Неизвестно'))}",
+                            f"  ФИО: {clean_text(person.get('name', 'Неизвестно'))}",
                             f"  Адрес: {clean_text(person.get('address', 'Неизвестно'))}",
                             f"  Статус: {clean_text(person.get('status', 'Неизвестно'))}",
                             f"  Дата статуса: {clean_text(person.get('status_date', 'Неизвестно'))}",
