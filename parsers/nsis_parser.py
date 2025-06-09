@@ -35,13 +35,11 @@ proxy_pool = [
     },
 ]
 
-
 def log_memory_usage():
     """Логирование потребления памяти."""
     process = psutil.Process()
     mem_info = process.memory_info()
     logger.info(f"Потребление памяти: {mem_info.rss / 1024 / 1024:.2f} МБ")
-
 
 async def attempt_osago_check(page, vin: str) -> tuple:
     """Выполняет попытку проверки ОСАГО и возвращает результат."""
@@ -123,7 +121,6 @@ async def attempt_osago_check(page, vin: str) -> tuple:
         logger.error(f"Ошибка Playwright для VIN {vin}: {str(e)}")
         return {"status": "error", "message": f"Ошибка загрузки страницы: {str(e)}", "vin": vin}, True
 
-
 async def get_info_osago(vin: str, semaphore: asyncio.Semaphore, cdp_endpoint: str = "http://localhost:9222") -> dict:
     """Основная функция получения данных ОСАГО для одного VIN."""
     async with GLOBAL_SEMAPHORE:
@@ -138,40 +135,46 @@ async def get_info_osago(vin: str, semaphore: asyncio.Semaphore, cdp_endpoint: s
                 logger.error(f"Ошибка инициализации браузера для VIN {vin}: {str(e)}")
                 return {"status": "error", "message": f"Ошибка инициализации браузера: {str(e)}", "vin": vin}
 
-            try:
-                max_attempts = 3
-                last_error = None
+            max_attempts = 3
+            last_error = None
 
-                for attempt in range(1, max_attempts + 1):
-                    try:
-                        result, can_retry = await attempt_osago_check(page, vin)
-                        if not can_retry:
-                            logger.info(f"Обработка VIN {vin} завершена за {time.time() - start_time:.2f} секунд")
-                            log_memory_usage()
-                            return result
-
-                        logger.info(f"Попытка {attempt} для VIN {vin} не удалась, повторная попытка через 3 секунды")
-                        await page.wait_for_timeout(3000)
-
-                    except Exception as e:
-                        last_error = str(e)
-                        if attempt < max_attempts:
-                            logger.info(f"Попытка {attempt} для VIN {vin} не удалась: {str(e)}, повторная попытка")
-                            await page.wait_for_timeout(3000)
-                            continue
-                        return {"status": "error", "message": f"Ошибка после {max_attempts} попыток: {last_error}",
-                                "vin": vin}
-
-                return {"status": "error", "message": f"Неизвестная ошибка после {max_attempts} попыток", "vin": vin}
-
-            finally:
+            for attempt in range(1, max_attempts + 1):
                 try:
+                    result, can_retry = await attempt_osago_check(page, vin)
+                    if not can_retry:
+                        logger.info(f"Обработка VIN {vin} завершена за {time.time() - start_time:.2f} секунд")
+                        log_memory_usage()
+                        await page.close()
+                        await context.close()
+                        await browser.close()
+                        return result
+
+                    logger.info(f"Попытка {attempt} для VIN {vin} не удалась, повторная попытка через 3 секунды")
+                    await page.close()
+                    page = await context.new_page()  # Пересоздаем страницу для новой попытки
+                    await page.wait_for_timeout(3000)
+
+                except Exception as e:
+                    last_error = str(e)
+                    logger.error(f"Попытка {attempt} для VIN {vin} не удалась: {str(e)}")
+                    if attempt < max_attempts:
+                        logger.info(f"Ожидаю 3 секунды перед повторной попыткой для VIN {vin}")
+                        await page.close()
+                        page = await context.new_page()  # Пересоздаем страницу
+                        await page.wait_for_timeout(3000)
+                        continue
                     await page.close()
                     await context.close()
                     await browser.close()
-                except Exception as e:
-                    logger.error(f"Ошибка при закрытии ресурсов для VIN {vin}: {str(e)}")
+                    return {"status": "error", "message": f"Ошибка после {max_attempts} попыток: {last_error}", "vin": vin}
 
+            try:
+                await page.close()
+                await context.close()
+                await browser.close()
+            except Exception as e:
+                logger.error(f"Ошибка при закрытии ресурсов для VIN {vin}: {str(e)}")
+            return {"status": "error", "message": f"Неизвестная ошибка после {max_attempts} попыток", "vin": vin}
 
 async def process_multiple_vins(vins: list, cdp_endpoint: str) -> list:
     """Параллельная обработка списка VIN."""
@@ -183,7 +186,6 @@ async def process_multiple_vins(vins: list, cdp_endpoint: str) -> list:
     log_memory_usage()
     return results
 
-
 @app.route('/osago', methods=['POST'])
 async def osago_handler():
     """Обработчик запроса проверки ОСАГО для одного или нескольких VIN."""
@@ -193,7 +195,6 @@ async def osago_handler():
     cdp_endpoint = data.get('cdp_endpoint', 'http://localhost:9222')
 
     def is_valid_vin(vin):
-        # Простая проверка: VIN должен быть строкой из 17 символов (буквы и цифры)
         return vin and re.match(r'^[A-HJ-NPR-Z0-9]{17}$', vin, re.IGNORECASE)
 
     if vin and is_valid_vin(vin):
@@ -215,7 +216,6 @@ async def osago_handler():
             return jsonify({"status": "error", "message": f"Ошибка обработки списка VIN: {str(e)}"}), 500
     else:
         return jsonify({"status": "error", "message": "Не указан VIN или список VIN"}), 400
-
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5006, use_reloader=False)

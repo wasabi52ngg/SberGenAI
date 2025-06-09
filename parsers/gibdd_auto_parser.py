@@ -192,8 +192,8 @@ async def perform_search(page, vin):
                 return {"status": "error", "message": "Ошибка отправки CAPTCHA", "vehicle": {}, "ownership_periods": [], "retry": True}
 
         # Ожидаем появления результатов
-        logger.info("Ожидаем блок результатов (до 10 секунд)")
-        await page.wait_for_selector('#checkAutoHistory .checkResult', state="visible", timeout=10000)
+        logger.info("Ожидаем блок результатов (до 13 секунд)")
+        await page.wait_for_selector('#checkAutoHistory .checkResult', state="visible", timeout=13000)
         history_div = await page.query_selector('#checkAutoHistory')
         if not history_div:
             logger.error("Не удалось найти блок результатов")
@@ -301,8 +301,8 @@ async def get_gibdd_info(vin: str) -> dict:
                 elif result.get("retry", False):
                     logger.info(f"Попытка {attempt} не удалась: {result['message']}. Требуется повторная попытка")
                     if attempt == max_retries:
-                        logger.error("Достигнуто максимальное количество попыток")
-                        result = {"status": "error", "message": "Не удалось решить CAPTCHA после 4 попыток", "vehicle": {}, "ownership_periods": []}
+                        logger.error("Достигнуто максимальное количество попыток сбора данных. Сервис работает медленно. Повторите попытку заново")
+                        result = {"status": "error", "message": "Достигнуто максимальное количество попыток сбора данных. Сервис работает медленно. Повторите попытку заново", "vehicle": {}, "ownership_periods": []}
                         break
                 else:
                     logger.info(f"Попытка {attempt} не удалась: {result['message']}. Повторная попытка не требуется")
@@ -311,8 +311,11 @@ async def get_gibdd_info(vin: str) -> dict:
             except Exception as e:
                 logger.error(f"Попытка {attempt} не удалась: {str(e)}")
                 if attempt == max_retries:
-                    logger.error("Достигнуто максимальное количество попыток")
-                    result = {"status": "error", "message": "Не удалось решить CAPTCHA после 4 попыток", "vehicle": {}, "ownership_periods": []}
+                    logger.error(
+                        "Достигнуто максимальное количество попыток сбора данных. Сервис работает медленно. Повторите попытку заново")
+                    result = {"status": "error",
+                              "message": "Достигнуто максимальное количество попыток сбора данных. Сервис работает медленно. Повторите попытку заново",
+                              "vehicle": {}, "ownership_periods": []}
                     break
 
             attempt += 1

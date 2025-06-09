@@ -35,13 +35,11 @@ proxy_pool = [
     },
 ]
 
-
 def log_memory_usage():
     """Логирование потребления памяти."""
     process = psutil.Process()
     mem_info = process.memory_info()
     logger.info(f"Потребление памяти: {mem_info.rss / 1024 / 1024:.2f} МБ")
-
 
 async def get_pledge_info(vin: str, semaphore: asyncio.Semaphore, cdp_endpoint: str = "http://localhost:9222") -> dict:
     """Получение данных о залоге ТС с reestr-zalogov.ru для одного VIN."""
@@ -51,7 +49,6 @@ async def get_pledge_info(vin: str, semaphore: asyncio.Semaphore, cdp_endpoint: 
                 logger.info(f"Подключение к CDP по адресу: {cdp_endpoint} для VIN {vin}")
                 browser = await p.chromium.connect_over_cdp(cdp_endpoint)
                 context = await browser.new_context()
-                # context = await browser.new_context(proxy=proxy_pool[0])
                 start_time = time.time()
                 page = await context.new_page()
             except PlaywrightError as e:
@@ -101,6 +98,14 @@ async def get_pledge_info(vin: str, semaphore: asyncio.Semaphore, cdp_endpoint: 
                     await page.click("#find-btn")
                     await page.wait_for_selector("div.search-results, div.search-error-label", timeout=15000)
 
+                    # Проверка на блокировку IP
+                    error_label = await page.query_selector("div.search-error-label")
+                    if error_label:
+                        error_text = await error_label.text_content()
+                        if "Доступ запрещен" in error_text and "похожи на автоматические" in error_text:
+                            logger.error(f"IP-адрес заблокирован для VIN {vin}")
+                            return {"status": "error", "message": "IP-адрес заблокирован сайтом", "vin": vin}
+
                     # Извлечение данных с помощью JavaScript
                     result = {"status": "success", "results": {"details": []}, "vin": vin}
                     data = await page.evaluate("""
@@ -116,7 +121,7 @@ async def get_pledge_info(vin: str, semaphore: asyncio.Semaphore, cdp_endpoint: 
                                 result.search_params = searchParams.textContent.trim();
                             }
 
-                            const table = document.querySelector('table.search-results');
+                            const table = document.query_selector('table.search-results');
                             if (table) {
                                 const rows = table.querySelectorAll('tr');
                                 rows.forEach((row, index) => {
@@ -165,7 +170,6 @@ async def get_pledge_info(vin: str, semaphore: asyncio.Semaphore, cdp_endpoint: 
                     except Exception as e:
                         logger.error(f"Ошибка при закрытии ресурсов для VIN {vin}: {str(e)}")
 
-
 async def process_multiple_vins(vins: list, cdp_endpoint: str) -> list:
     """Параллельная обработка списка VIN."""
     start_time = time.time()
@@ -175,7 +179,6 @@ async def process_multiple_vins(vins: list, cdp_endpoint: str) -> list:
     logger.info(f"Обработка {len(vins)} VIN заняла {time.time() - start_time:.2f} секунд")
     log_memory_usage()
     return results
-
 
 @app.route('/pledge', methods=['POST'])
 async def pledge_endpoint():
@@ -207,7 +210,6 @@ async def pledge_endpoint():
             return jsonify({"status": "error", "message": f"Ошибка обработки списка VIN: {str(e)}"}), 500
     else:
         return jsonify({"status": "error", "message": "Не указан VIN или список VIN"}), 400
-
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5008)
