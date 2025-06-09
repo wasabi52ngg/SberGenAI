@@ -5,6 +5,8 @@ import psutil
 import time
 from flask import Flask, request, jsonify
 from playwright.async_api import async_playwright, Error as PlaywrightError
+import os
+import dotenv
 
 # Настройка логирования
 logging.basicConfig(
@@ -21,11 +23,25 @@ app = Flask(__name__)
 MAX_CONCURRENT_REQUESTS = 2  # Параллельные запросы на сервис
 GLOBAL_SEMAPHORE = asyncio.Semaphore(10)  # Общий лимит страниц для всех сервисов
 
+# Загрузка переменных окружения
+dotenv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+dotenv.load_dotenv(dotenv_path)
+
+proxy_pool = [
+    {
+        "server": os.getenv("PROXY_SERVER"),
+        "username": os.getenv("PROXY_USERNAME"),
+        "password": os.getenv("PROXY_PASSWORD")
+    },
+]
+
+
 def log_memory_usage():
     """Логирование потребления памяти."""
     process = psutil.Process()
     mem_info = process.memory_info()
     logger.info(f"Потребление памяти: {mem_info.rss / 1024 / 1024:.2f} МБ")
+
 
 async def get_pledge_info(vin: str, semaphore: asyncio.Semaphore, cdp_endpoint: str = "http://localhost:9222") -> dict:
     """Получение данных о залоге ТС с reestr-zalogov.ru для одного VIN."""
@@ -35,6 +51,7 @@ async def get_pledge_info(vin: str, semaphore: asyncio.Semaphore, cdp_endpoint: 
                 logger.info(f"Подключение к CDP по адресу: {cdp_endpoint} для VIN {vin}")
                 browser = await p.chromium.connect_over_cdp(cdp_endpoint)
                 context = await browser.new_context()
+                # context = await browser.new_context(proxy=proxy_pool[0])
                 start_time = time.time()
                 page = await context.new_page()
             except PlaywrightError as e:
@@ -47,7 +64,8 @@ async def get_pledge_info(vin: str, semaphore: asyncio.Semaphore, cdp_endpoint: 
             for attempt in range(1, max_attempts + 1):
                 try:
                     url = "https://www.reestr-zalogov.ru/search/index"
-                    logger.info(f"Попытка {attempt} из {max_attempts}: Загружаю страницу reestr-zalogov.ru для VIN {vin}")
+                    logger.info(
+                        f"Попытка {attempt} из {max_attempts}: Загружаю страницу reestr-zalogov.ru для VIN {vin}")
                     await page.goto(url, wait_until="networkidle", timeout=60000)
 
                     # Проверка на капчу
@@ -136,7 +154,8 @@ async def get_pledge_info(vin: str, semaphore: asyncio.Semaphore, cdp_endpoint: 
                         logger.info(f"Ожидаю 3 секунды перед повторной попыткой для VIN {vin}")
                         await page.wait_for_timeout(3000)
                         continue
-                    return {"status": "error", "message": f"Ошибка после {max_attempts} попыток: {last_error}", "vin": vin}
+                    return {"status": "error", "message": f"Ошибка после {max_attempts} попыток: {last_error}",
+                            "vin": vin}
 
                 finally:
                     try:
@@ -145,6 +164,7 @@ async def get_pledge_info(vin: str, semaphore: asyncio.Semaphore, cdp_endpoint: 
                         await browser.close()
                     except Exception as e:
                         logger.error(f"Ошибка при закрытии ресурсов для VIN {vin}: {str(e)}")
+
 
 async def process_multiple_vins(vins: list, cdp_endpoint: str) -> list:
     """Параллельная обработка списка VIN."""
@@ -155,6 +175,7 @@ async def process_multiple_vins(vins: list, cdp_endpoint: str) -> list:
     logger.info(f"Обработка {len(vins)} VIN заняла {time.time() - start_time:.2f} секунд")
     log_memory_usage()
     return results
+
 
 @app.route('/pledge', methods=['POST'])
 async def pledge_endpoint():
@@ -186,6 +207,7 @@ async def pledge_endpoint():
             return jsonify({"status": "error", "message": f"Ошибка обработки списка VIN: {str(e)}"}), 500
     else:
         return jsonify({"status": "error", "message": "Не указан VIN или список VIN"}), 400
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5008)

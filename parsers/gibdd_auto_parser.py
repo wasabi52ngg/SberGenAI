@@ -267,7 +267,7 @@ async def perform_search(page, vin):
         }
     except Exception as e:
         logger.error(f"Поиск не удался: {str(e)}")
-        return {"status": "error", "message": f"Поиск не удался: {str(e)}", "vehicle": {}, "ownership_periods": [], "retry": False}
+        return {"status": "error", "message": f"Поиск не удался: {str(e)}", "vehicle": {}, "ownership_periods": [], "retry": True}
 
 async def get_gibdd_info(vin: str) -> dict:
     """Получает информацию о транспортном средстве по VIN с сайта ГИБДД."""

@@ -1348,7 +1348,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def post_init(application: Application) -> None:
     """Запуск планировщика после инициализации бота."""
     scheduler.add_job(backup_db, 'interval', days=1)
-    scheduler.add_job(update_db_records, 'cron', hour=0, minute=0, args=[None])
+    # scheduler.add_job(update_db_records, 'cron', hour=0, minute=0, args=[None])
     scheduler.start()
     logger.info("Планировщик запущен")
 

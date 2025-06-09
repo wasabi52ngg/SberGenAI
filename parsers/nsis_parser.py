@@ -5,6 +5,8 @@ import psutil
 import time
 from flask import Flask, request, jsonify
 from playwright.async_api import async_playwright, Error as PlaywrightError
+import os
+import dotenv
 
 # Настройка логирования
 logging.basicConfig(
@@ -20,6 +22,18 @@ app = Flask(__name__)
 # Ограничения
 MAX_CONCURRENT_REQUESTS = 2  # Параллельные запросы на сервис
 GLOBAL_SEMAPHORE = asyncio.Semaphore(10)  # Общий лимит страниц для всех сервисов
+
+# Загрузка переменных окружения
+dotenv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+dotenv.load_dotenv(dotenv_path)
+
+proxy_pool = [
+    {
+        "server": os.getenv("PROXY_SERVER"),
+        "username": os.getenv("PROXY_USERNAME"),
+        "password": os.getenv("PROXY_PASSWORD")
+    },
+]
 
 
 def log_memory_usage():
@@ -117,7 +131,7 @@ async def get_info_osago(vin: str, semaphore: asyncio.Semaphore, cdp_endpoint: s
             try:
                 logger.info(f"Подключение к CDP по адресу: {cdp_endpoint} для VIN {vin}")
                 browser = await p.chromium.connect_over_cdp(cdp_endpoint)
-                context = await browser.new_context()
+                context = await browser.new_context(proxy=proxy_pool[0])
                 start_time = time.time()
                 page = await context.new_page()
             except PlaywrightError as e:
@@ -145,7 +159,8 @@ async def get_info_osago(vin: str, semaphore: asyncio.Semaphore, cdp_endpoint: s
                             logger.info(f"Попытка {attempt} для VIN {vin} не удалась: {str(e)}, повторная попытка")
                             await page.wait_for_timeout(3000)
                             continue
-                        return {"status": "error", "message": f"Ошибка после {max_attempts} попыток: {last_error}", "vin": vin}
+                        return {"status": "error", "message": f"Ошибка после {max_attempts} попыток: {last_error}",
+                                "vin": vin}
 
                 return {"status": "error", "message": f"Неизвестная ошибка после {max_attempts} попыток", "vin": vin}
 
