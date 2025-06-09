@@ -289,9 +289,8 @@ async def fetch_service_data(service: str, payload: dict, max_attempts: int = 3,
         logger.error(f"Неизвестный сервис: {service}")
         return {"status": "error", "message": f"Неизвестный сервис: {service}"}
 
-    # Устанавливаем таймаут: 120 секунд для gibdd_auto и gibdd_fines, 30 секунд для остальных
     timeout = 120 if service in ["gibdd_auto", "gibdd_fines"] else 30
-    total_timeout = timeout * max_attempts  # Общий таймаут для всех попыток
+    total_timeout = timeout * max_attempts
 
     async with aiohttp.ClientSession() as session:
         start_time = asyncio.get_event_loop().time()
@@ -313,25 +312,21 @@ async def fetch_service_data(service: str, payload: dict, max_attempts: int = 3,
                     data = await response.json()
                     logger.info(f"Запрос к {service}: {data}")
 
-                    # Проверяем, является ли ответ промежуточным для gibdd_auto и gibdd_fines
                     if service in ["gibdd_auto", "gibdd_fines"]:
-                        # Для gibdd_fines: промежуточный ответ
+                        elapsed_time = asyncio.get_event_loop().time() - start_time
                         if data.get("data") == "Выполняется запрос, ждите...":
-                            elapsed_time = asyncio.get_event_loop().time() - start_time
                             if elapsed_time >= total_timeout:
                                 logger.error(f"Превышен общий таймаут ({total_timeout} секунд) для {service}")
                                 return {"status": "error", "message": f"Превышен таймаут {total_timeout} секунд"}
                             logger.info(f"Промежуточный ответ от {service}, ожидание {check_interval} секунд перед повторной проверкой")
                             await asyncio.sleep(check_interval)
                             continue
-                        # Для gibdd_auto: ошибка таймаута или retry=True
                         elif service == "gibdd_auto" and (
                             data.get("status") == "error" and (
                                 "Timeout 10000ms exceeded" in data.get("message", "") or
                                 data.get("retry", False)
                             )
                         ):
-                            elapsed_time = asyncio.get_event_loop().time() - start_time
                             if elapsed_time >= total_timeout:
                                 logger.error(f"Превышен общий таймаут ({total_timeout} секунд) для {service}")
                                 return {"status": "error", "message": f"Превышен таймаут {total_timeout} секунд"}
@@ -339,7 +334,7 @@ async def fetch_service_data(service: str, payload: dict, max_attempts: int = 3,
                             await asyncio.sleep(check_interval)
                             continue
 
-                    # Если ответ содержит финальный статус, возвращаем его
+                    # Финальный ответ
                     if data.get("status") in ["success", "error", "no_data"]:
                         logger.info(f"Успешный запрос к {service}: {data}")
                         return data
