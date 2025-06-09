@@ -1014,16 +1014,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     elif field_name == "nsis":
                         result = []
                         if data.get("status") == "success":
-                            policies = data.get("policies", [])
+                            policies = data.get("policies", []) or (data.get("results", {}) and [])
                             if not policies:
                                 result.append("- Полисы ОСАГО: Не найдено")
                             else:
+                                key_mapping = {
+                                    "nomer_polisa": "policy_number",
+                                    "strahovaya_kompaniya": "insurer",
+                                    "data_nachala_deystviya": "valid_from",
+                                    "data_okonchaniya_deystviya": "valid_to"
+                                }
                                 for policy in policies:
-                                    result.append(f"- Полис:")
-                                    result.append(f"  - Номер: {policy.get('policy_number', 'Неизвестно')}")
-                                    result.append(f"  - Страховая: {policy.get('insurer', 'Неизвестно')}")
-                                    result.append(f"  - Действует с: {policy.get('valid_from', 'Неизвестно')}")
-                                    result.append(f"  - Действует до: {policy.get('valid_to', 'Неизвестно')}")
+                                    mapped_policy = {key_mapping.get(k, k): v for k, v in policy.items()}
+                                    result.append("- Полис:")
+                                    result.append(f"  - Номер: {mapped_policy.get('policy_number', 'Неизвестно')}")
+                                    result.append(f"  - Страховая: {mapped_policy.get('insurer', 'Неизвестно')}")
+                                    result.append(f"  - Действует с: {mapped_policy.get('valid_from', 'Неизвестно')}")
+                                    result.append(f"  - Действует до: {mapped_policy.get('valid_to', 'Неизвестно')}")
                             result.append("- Статус: Успешное получение данных")
                         else:
                             error_msg = data.get("message", "Неизвестная ошибка")
