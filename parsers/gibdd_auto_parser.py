@@ -148,7 +148,7 @@ async def perform_search(page, vin):
     try:
         vin_input_selector = '#checkAutoVIN'
         logger.info("Ожидаем поле ввода VIN (до 5 секунд)")
-        await page.wait_for_selector(vin_input_selector, state="visible", timeout=5000)
+        await page.wait_for_selector(vin_input_selector, state="visible", timeout=10000)
         logger.info(f"Вводим VIN: {vin}")
         await page.fill(vin_input_selector, vin)
 
