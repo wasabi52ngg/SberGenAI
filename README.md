@@ -153,3 +153,24 @@
     - API Deepseek: https://console.proxyapi.ru/
     - Решение каптчи: https://2captcha.com
     - Сервер с Xubuntu(его можно выбрать при выборе ПО для сервера): https://invapi.hostkey.ru/
+
+## Пример заполнения сервиса
+
+
+**Создание сервиса**
+sudo nano /etc/systemd/system/telegrambottaroold.service
+
+```ini
+[Unit]
+Description=Telegram Bot
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/root/telegram_bots/telegrambottaroold
+ExecStart=/root/telegram_bots/telegrambottaroold/venv/bin/python3 /root/telegram_bots/telegrambottaroold/tarot_bot.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
